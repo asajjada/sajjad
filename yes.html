@@ -1,6 +1,6 @@
 <html lang="en"><head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Elegant Flappy Bird</title>
     <style>
         * {
@@ -8,6 +8,7 @@
             padding: 0;
             box-sizing: border-box;
             font-family: 'Poppins', sans-serif;
+            touch-action: manipulation;
         }
 
         body {
@@ -30,6 +31,7 @@
 
         #game-canvas {
             background: linear-gradient(to bottom, #64B3F4, #c2e9fb);
+            touch-action: none;
         }
 
         .start-screen {
@@ -194,8 +196,14 @@
 
         @media (max-width: 400px) {
             .game-container {
-                width: 320px;
-                height: 568px;
+                width: 100%;
+                height: 100vh;
+                border-radius: 0;
+            }
+            
+            #game-canvas {
+                width: 100%;
+                height: 100%;
             }
         }
     </style>
@@ -232,29 +240,48 @@
             const finalScore = document.querySelector('.final-score');
             const speedIndicator = document.querySelector('.speed-indicator');
             
+            // Resize canvas to fit container
+            function resizeCanvas() {
+                const container = document.querySelector('.game-container');
+                canvas.width = container.clientWidth;
+                canvas.height = container.clientHeight;
+            }
+            
+            // Call resize on load and window resize
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
             // Game variables
             let gameActive = false;
             let score = 0;
-            let gravity = 0.3;
             let animationId;
-            let frameCount = 0;
+            let lastTime = 0;
+            let deltaTime = 0;
+            
+            // Detect if running on mobile
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
+            // Physics constants - adjusted for consistent experience across devices
+            const BASE_GRAVITY = 0.0015; // Base gravity value (per millisecond)
+            const gravity = isMobile ? BASE_GRAVITY * 0.85 : BASE_GRAVITY; // Slightly reduced gravity on mobile
+            const BASE_JUMP_STRENGTH = -0.6; // Base jump strength
+            const jumpStrength = isMobile ? BASE_JUMP_STRENGTH * 0.9 : BASE_JUMP_STRENGTH;
             
             // Speed scaling variables
-            const initialPipeSpeed = 1.5;
+            const initialPipeSpeed = 0.0025; // Speed per millisecond
             const maxSpeedMultiplier = 2.0; // Double the initial speed at score 100+
             let currentSpeedMultiplier = 1.0;
             
             // Bird properties
             const bird = {
-                x: 80,
+                x: canvas.width * 0.2,
                 y: canvas.height / 2 - 15,
                 width: 34,
                 height: 24,
                 velocity: 0,
-                jumpStrength: -6,
                 rotation: 0,
                 wingPhase: 0, // For wing animation
-                wingSpeed: 0.15, // Base wing flapping speed
+                wingSpeed: 0.004, // Base wing flapping speed (per millisecond)
                 
                 draw() {
                     ctx.save();
@@ -268,7 +295,7 @@
                     ctx.fill();
                     
                     // Animate wings based on wingPhase
-                    this.wingPhase += this.wingSpeed * currentSpeedMultiplier;
+                    this.wingPhase += this.wingSpeed * deltaTime * currentSpeedMultiplier;
                     if (this.wingPhase > Math.PI * 2) {
                         this.wingPhase -= Math.PI * 2;
                     }
@@ -312,11 +339,13 @@
                 },
                 
                 update() {
-                    this.velocity += gravity;
-                    this.y += this.velocity;
+                    // Time-based physics update
+                    this.velocity += gravity * deltaTime;
+                    this.y += this.velocity * deltaTime;
                     
                     // Rotation based on velocity - smoother rotation
-                    this.rotation = Math.min(Math.PI / 6, Math.max(-Math.PI / 6, this.velocity * 0.03));
+                    const targetRotation = Math.min(Math.PI / 6, Math.max(-Math.PI / 6, this.velocity * 0.1));
+                    this.rotation = this.rotation * 0.9 + targetRotation * 0.1; // Smooth rotation
                     
                     // Boundary check
                     if (this.y + this.height > canvas.height - groundHeight) {
@@ -332,17 +361,17 @@
                 },
                 
                 jump() {
-                    this.velocity = this.jumpStrength;
+                    this.velocity = jumpStrength;
                 }
             };
             
             // Pipe properties
             const pipes = [];
-            const pipeWidth = 60;
-            const pipeGap = 180;
-            const initialPipeSpawnRate = 150;
-            let pipeSpawnRate = initialPipeSpawnRate;
-            let pipeTimer = 0;
+            const pipeWidth = Math.min(60, canvas.width * 0.15);
+            const pipeGap = Math.min(180, canvas.height * 0.28);
+            const initialPipeSpawnTime = 1500; // 1.5 seconds between pipes
+            let pipeSpawnTime = initialPipeSpawnTime;
+            let timeSinceLastPipe = 0;
             
             function updateGameSpeed() {
                 if (score <= 100) {
@@ -356,12 +385,12 @@
                 // Update speed indicator with one decimal place
                 speedIndicator.textContent = `Speed: ${currentSpeedMultiplier.toFixed(1)}x`;
                 
-                // Adjust pipe spawn rate inversely to speed (faster speed = lower spawn rate)
-                pipeSpawnRate = Math.floor(initialPipeSpawnRate / currentSpeedMultiplier);
+                // Adjust pipe spawn time inversely to speed (faster speed = lower spawn time)
+                pipeSpawnTime = initialPipeSpawnTime / currentSpeedMultiplier;
             }
             
             function createPipe() {
-                const minHeight = 50;
+                const minHeight = Math.min(50, canvas.height * 0.08);
                 const maxHeight = canvas.height - groundHeight - pipeGap - minHeight;
                 const height = Math.floor(Math.random() * (maxHeight - minHeight + 1)) + minHeight;
                 
@@ -383,8 +412,8 @@
                     },
                     
                     update() {
-                        // Apply current speed multiplier to pipe movement
-                        this.x -= initialPipeSpeed * currentSpeedMultiplier;
+                        // Apply current speed multiplier to pipe movement (time-based)
+                        this.x -= initialPipeSpeed * deltaTime * currentSpeedMultiplier;
                         
                         // Check if bird passed the pipe
                         if (!this.passed && this.x + this.width < bird.x) {
@@ -408,7 +437,7 @@
                 const pipeColor = '#4CAF50';
                 const pipeHighlightColor = '#81C784';
                 const pipeShadowColor = '#388E3C';
-                const capHeight = 30;
+                const capHeight = Math.min(30, height * 0.2);
                 
                 // Pipe body
                 ctx.fillStyle = pipeColor;
@@ -416,11 +445,11 @@
                 
                 // Pipe highlight
                 ctx.fillStyle = pipeHighlightColor;
-                ctx.fillRect(x + 5, y, 10, height);
+                ctx.fillRect(x + width * 0.08, y, width * 0.15, height);
                 
                 // Pipe shadow
                 ctx.fillStyle = pipeShadowColor;
-                ctx.fillRect(x + width - 15, y, 10, height);
+                ctx.fillRect(x + width - width * 0.23, y, width * 0.15, height);
                 
                 // Pipe cap
                 ctx.fillStyle = pipeColor;
@@ -433,17 +462,17 @@
                 // Cap highlight
                 ctx.fillStyle = pipeHighlightColor;
                 if (isTop) {
-                    ctx.fillRect(x, y + height - capHeight, 10, capHeight);
+                    ctx.fillRect(x, y + height - capHeight, width * 0.15, capHeight);
                 } else {
-                    ctx.fillRect(x, y, 10, capHeight);
+                    ctx.fillRect(x, y, width * 0.15, capHeight);
                 }
                 
                 // Cap shadow
                 ctx.fillStyle = pipeShadowColor;
                 if (isTop) {
-                    ctx.fillRect(x + width - 15, y + height - capHeight, 10, capHeight);
+                    ctx.fillRect(x + width - width * 0.23, y + height - capHeight, width * 0.15, capHeight);
                 } else {
-                    ctx.fillRect(x + width - 15, y, 10, capHeight);
+                    ctx.fillRect(x + width - width * 0.23, y, width * 0.15, capHeight);
                 }
             }
             
@@ -500,13 +529,14 @@
             const cloudCount = 6;
             
             function createClouds() {
+                clouds.length = 0; // Clear existing clouds
                 for (let i = 0; i < cloudCount; i++) {
                     clouds.push({
                         x: Math.random() * canvas.width,
                         y: Math.random() * (canvas.height / 2),
-                        width: Math.random() * 60 + 40,
-                        height: Math.random() * 30 + 20,
-                        baseSpeed: Math.random() * 0.3 + 0.1 // Base cloud speed
+                        width: Math.random() * (canvas.width * 0.15) + (canvas.width * 0.1),
+                        height: Math.random() * (canvas.height * 0.05) + (canvas.height * 0.03),
+                        baseSpeed: Math.random() * 0.0005 + 0.0003 // Base cloud speed (per millisecond)
                     });
                 }
             }
@@ -523,7 +553,7 @@
                     ctx.fill();
                     
                     // Apply speed multiplier to cloud movement (but less than pipes)
-                    cloud.x -= cloud.baseSpeed * (1 + (currentSpeedMultiplier - 1) * 0.5);
+                    cloud.x -= cloud.baseSpeed * deltaTime * (1 + (currentSpeedMultiplier - 1) * 0.5);
                     
                     if (cloud.x + cloud.width < 0) {
                         cloud.x = canvas.width + cloud.width;
@@ -533,12 +563,12 @@
             }
             
             // Ground
-            const groundHeight = 80;
+            const groundHeight = Math.min(80, canvas.height * 0.125);
             let groundOffset = 0;
             
             function drawGround() {
                 // Update ground offset based on game speed
-                groundOffset = (groundOffset + initialPipeSpeed * currentSpeedMultiplier) % 20;
+                groundOffset = (groundOffset + initialPipeSpeed * deltaTime * currentSpeedMultiplier) % 20;
                 
                 // Ground
                 const groundGradient = ctx.createLinearGradient(0, canvas.height - groundHeight, 0, canvas.height);
@@ -553,13 +583,14 @@
                 ctx.beginPath();
                 ctx.moveTo(0, canvas.height - groundHeight);
                 
-                for (let i = 0; i < canvas.width + 20; i += 10) {
-                    const xPos = (i - groundOffset) % (canvas.width + 20);
-                    if (xPos < -10) continue;
+                const grassSegmentWidth = 10;
+                for (let i = 0; i < canvas.width + grassSegmentWidth; i += grassSegmentWidth) {
+                    const xPos = (i - groundOffset) % (canvas.width + grassSegmentWidth);
+                    if (xPos < -grassSegmentWidth) continue;
                     if (xPos > canvas.width) continue;
                     
-                    ctx.lineTo(xPos + 5, canvas.height - groundHeight - 5);
-                    ctx.lineTo(xPos + 10, canvas.height - groundHeight);
+                    ctx.lineTo(xPos + grassSegmentWidth/2, canvas.height - groundHeight - 5);
+                    ctx.lineTo(xPos + grassSegmentWidth, canvas.height - groundHeight);
                 }
                 
                 ctx.lineTo(canvas.width, canvas.height - groundHeight);
@@ -577,7 +608,8 @@
                 currentSpeedMultiplier = 1.0;
                 speedIndicator.textContent = "Speed: 1.0x";
                 
-                // Reset bird
+                // Reset bird position based on canvas size
+                bird.x = canvas.width * 0.2;
                 bird.y = canvas.height / 2 - 15;
                 bird.velocity = 0;
                 bird.rotation = 0;
@@ -587,15 +619,19 @@
                 pipes.length = 0;
                 
                 // Reset pipe timer
-                pipeTimer = 0;
-                pipeSpawnRate = initialPipeSpawnRate;
+                timeSinceLastPipe = 0;
+                pipeSpawnTime = initialPipeSpawnTime;
+                
+                // Create clouds based on current canvas size
+                createClouds();
                 
                 // Hide start screen
                 startScreen.style.display = 'none';
                 gameOverScreen.classList.remove('show');
                 
-                // Start game loop
-                gameLoop();
+                // Start game loop with timestamp
+                lastTime = performance.now();
+                gameLoop(lastTime);
             }
             
             function gameOver() {
@@ -606,15 +642,26 @@
                 gameOverScreen.classList.add('show');
             }
             
-            function gameLoop() {
+            function gameLoop(timestamp) {
+                // Calculate delta time in milliseconds
+                deltaTime = timestamp - lastTime;
+                lastTime = timestamp;
+                
+                // Limit delta time to prevent huge jumps if tab was inactive
+                if (deltaTime > 100) deltaTime = 100;
+                
                 // Clear canvas
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
-                // Increment frame counter
-                frameCount++;
-                
                 // Draw background elements
                 drawClouds();
+                
+                // Update pipe spawn timer
+                timeSinceLastPipe += deltaTime;
+                if (timeSinceLastPipe >= pipeSpawnTime) {
+                    createPipe();
+                    timeSinceLastPipe = 0;
+                }
                 
                 // Update and draw pipes
                 pipes.forEach((pipe, index) => {
@@ -626,13 +673,6 @@
                         pipes.splice(index, 1);
                     }
                 });
-                
-                // Spawn new pipes
-                pipeTimer++;
-                if (pipeTimer >= pipeSpawnRate) {
-                    createPipe();
-                    pipeTimer = 0;
-                }
                 
                 // Draw ground
                 drawGround();
@@ -650,12 +690,21 @@
             startBtn.addEventListener('click', startGame);
             restartBtn.addEventListener('click', startGame);
             
-            // Jump with mouse click
-            canvas.addEventListener('click', () => {
+            // Jump with mouse click or touch
+            canvas.addEventListener('click', (e) => {
+                e.preventDefault(); // Prevent double tap zoom on mobile
                 if (gameActive) {
                     bird.jump();
                 }
             });
+            
+            // Prevent default touch behavior to avoid scrolling
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (gameActive) {
+                    bird.jump();
+                }
+            }, { passive: false });
             
             // Jump with spacebar or arrow up
             document.addEventListener('keydown', (e) => {
@@ -673,15 +722,16 @@
                 }
             });
             
-            // Initialize clouds
-            createClouds();
-            
             // Initial render
+            createClouds();
             drawClouds();
             drawGround();
+            
+            // Position bird based on canvas size
+            bird.x = canvas.width * 0.2;
             bird.draw();
         });
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'94af243122bee5ed',t:'MTc0OTEyMDk2NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><iframe height="1" width="1" style="position: absolute; top: 0px; left: 0px; border: medium; visibility: hidden;"></iframe>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'94af63fc3640e617',t:'MTc0OTEyMzU3OC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><iframe height="1" width="1" style="position: absolute; top: 0px; left: 0px; border: medium; visibility: hidden;"></iframe>
 
 </body></html>
